@@ -2,6 +2,8 @@
 
 ### Config file format
 
+create a file named `cameras.config` containing the following:
+
     <camera1_name> <camera1_url>
     <camera2_name> <camera2_url>
     ...
