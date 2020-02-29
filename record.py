@@ -1,14 +1,14 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 import datetime
 import glob
+import multiprocessing
 import os
 import re
 import subprocess
 import sys
 import time
-from multiprocessing import Process
 
 RECORDING_PATH = os.getcwd()
 RECORDING_LENGTH_S = 300
@@ -26,14 +26,36 @@ Config file format:
 
 def get_free_space(path):
     df = subprocess.Popen(['df', path], stdout=subprocess.PIPE)
-    output = df.communicate()[0]
-    device, size, used, available, percent, mountpoint = output.split("\n")[1].split()
+    output = df.communicate()[0].decode('utf-8')
+    device, size, used, available, percent, mountpoint = output.split('\n')[1].split()
+    available = int(available)
     return available
 
 def record_stream(name, url):
     file_name = '{}_{}.mp4'.format(name, DATE_FORMAT)
     recording_length = str(RECORDING_LENGTH_S)
-    args = ['ffmpeg', '-i', url, '-vcodec', 'copy', '-c:a', 'aac', '-map', '0', '-f', 'segment', '-segment_time', recording_length, '-segment_format', 'mp4', '-strftime', '1', file_name]
+    rv = 0
+    args = ['ffmpeg',
+            # URL to record
+            '-i', url,
+            # Don't re-encode video, just copy raw data
+            '-c:v', 'copy',
+            # Re-encode audio into AAC codec, which is supported by MP4
+            '-c:a', 'aac',
+            # Select high-resolution stream
+            '-map', '0',
+            # Split recording into small files
+            '-f', 'segment',
+            # Set length of each segment
+            '-segment_time', recording_length,
+            # Write to mp4 format
+            '-segment_format', 'mp4',
+            # Start timestamp at 0 for each segment
+            '-reset_timestamps', '1',
+            # Use strftime function to name files
+            '-strftime', '1',
+            # Filename template
+            file_name]
     try:
         print('Recording ' + name)
         rv = subprocess.call(args)
@@ -41,6 +63,7 @@ def record_stream(name, url):
         print('Interrupt in process ' + name)
     finally:
         print('Cleaning up in process ' + name)
+    return rv
 
 def get_oldest_recording():
     p = re.compile('^.+_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}).mp4')
@@ -83,33 +106,52 @@ def checkfor(args):
         with open(os.devnull, 'w') as f:
             subprocess.call(args, stderr=subprocess.STDOUT, stdout=f)
     except:
-        print "Required program '{}' not found! exiting.".format(args[0])
+        print('Required program "{}" not found! exiting.').format(args[0])
         sys.exit(1)
 
 def main(argv):
     os.chdir(RECORDING_PATH)
     checkfor(['ffmpeg',  '-version'])
     filepath = 'cameras.config'
-    processes = []
-    cameras = []
+    processes = {}
+    cameras = {}
     with open(filepath) as fp:
         while True:
             line = fp.readline()
             if not line:
                 break
-            name, url = line.strip().split()
-            cameras.append((name, url))
-    p = Process(target=monitor_disk_space)
+            line = line.strip()
+            # ignore comments
+            if len(line) and line[0] == '#':
+                continue
+            name, url = line.split()
+            cameras[name] = url
+    p = multiprocessing.Process(target=monitor_disk_space)
     p.start()
-    processes.append(p)
-    for camera in cameras:
-        p = Process(target=record_stream, args=camera)
+    processes[p.sentinel] = 'monitor'
+    for name, url in cameras.items():
+        p = multiprocessing.Process(target=record_stream, args=(name, url))
         p.start()
-        processes.append(p)
+        processes[p.sentinel] = name
 
     try:
-        for process in processes:
-            process.join()
+        from multiprocessing.connection import wait
+        while True:
+            sentinels = processes.keys()
+            exited_sentinels = wait(sentinels)
+            for sentinel in exited_sentinels:
+                if processes[sentinel] == 'monitor':
+                    del processes[sentinel]
+                    p = multiprocessing.Process(target=monitor_disk_space)
+                    p.start()
+                    processes[p.sentinel] = 'monitor'
+                else:
+                    name = processes[sentinel]
+                    del processes[sentinel]
+                    url = cameras[name]
+                    p = multiprocessing.Process(target=record_stream, args=(name, url))
+                    p.start()
+                    processes[p.sentinel] = name
     except KeyboardInterrupt:
         print('Interrupt in main')
     finally:
