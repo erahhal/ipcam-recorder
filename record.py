@@ -10,6 +10,11 @@ import subprocess
 import sys
 import time
 
+# Switch to script path
+abspath = os.path.abspath(__file__)
+dname = os.path.dirname(abspath)
+os.chdir(dname)
+
 RECORDING_PATH = os.getcwd()
 RECORDING_LENGTH_S = 300
 MIN_FREE_DISK_KB = 200000
