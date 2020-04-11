@@ -101,14 +101,14 @@ def record_stream(name, url):
         running = True
         while running:
             try:
-                line = q_stdout.get_nowait()
+                _line = q_stdout.get_nowait()
                 # Could print to a log
             except queue.Empty:
                 # no output
                 pass
 
             try:
-                line = q_stderr.get_nowait()
+                _line = q_stderr.get_nowait()
                 # Could print to a log
             except queue.Empty:
                 # no output
