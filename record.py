@@ -6,6 +6,7 @@ import glob
 import multiprocessing
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -32,15 +33,15 @@ Config file format:
 def get_free_space(path):
     df = subprocess.Popen(['df', path], stdout=subprocess.PIPE)
     output = df.communicate()[0].decode('utf-8')
-    device, size, used, available, percent, mountpoint = output.split('\n')[1].split()
+    _device, _size, _used, available, _percent, _mountpoint = output.split('\n')[1].split()
     available = int(available)
     return available
 
 def record_stream(name, url):
     file_name = '{}_{}.mp4'.format(name, DATE_FORMAT)
     recording_length = str(RECORDING_LENGTH_S)
-    rv = 0
-    args = ['ffmpeg',
+    args = ['nohup',
+            'ffmpeg',
             # URL to record
             '-i', url,
             # Don't re-encode video, just copy raw data
@@ -61,17 +62,28 @@ def record_stream(name, url):
             '-strftime', '1',
             # Filename template
             file_name]
+    print('Recording ' + name)
+    p = None
     try:
-        print('Recording ' + name)
-        rv = subprocess.call(args)
+        def preexec():
+            # seems to increase probability of leaving
+            # behind an uncorrupted video, but not enough
+            # data to know if this is actually having an effect
+            os.setpgrp()
+        p = subprocess.Popen(args, preexec_fn=preexec)
+        def sigterm_handler(signum, frame):
+            os.kill(p.pid, signal.SIGINT)
+        signal.signal(signal.SIGTERM, sigterm_handler)
+        p.wait()
     except KeyboardInterrupt:
         print('Interrupt in process ' + name)
+        os.kill(p.pid, signal.SIGINT)
     finally:
         print('Cleaning up in process ' + name)
-    return rv
+
 
 def get_oldest_recording():
-    p = re.compile('^.+_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}).mp4')
+    p = re.compile('^.+_(\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}).mp4')
     oldest_filename = None
     oldest_timestamp = 9999999999999
     for filename in glob.glob('*.mp4'):
